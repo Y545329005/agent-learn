@@ -1,0 +1,110 @@
+#!/usr/bin/env python3
+"""set-env — 安全地写入本机凭据文件（无第三方依赖）
+
+用法：
+    set-env <文件路径> KEY [KEY...]
+
+行为：
+    - 逐项盲输（不回显、不进 shell 历史、不进命令行）
+    - 写入 `KEY=原值` 形式，不添加引号
+    - 文件权限强制 600，写入走临时文件 + 原子替换
+    - 已存在的键会被覆盖，其余行原样保留
+
+**必须在真实终端里运行。** 非终端环境（如 Agent 工具调用）会直接拒绝，
+以免口令进入对话记录或会话数据库。
+"""
+
+import getpass
+import os
+import sys
+import tempfile
+
+
+def refuse(msg: str) -> "None":
+    print(f"拒绝执行：{msg}", file=sys.stderr)
+    sys.exit(2)
+
+
+def parse(lines):
+    """返回 (行列表, {键: 行号})。"""
+    index = {}
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        key = stripped.split("=", 1)[0].strip()
+        if key:
+            index[key] = i
+    return index
+
+
+def main() -> int:
+    argv = sys.argv[1:]
+    if len(argv) < 2:
+        print(__doc__.strip(), file=sys.stderr)
+        return 2
+
+    path, keys = argv[0], argv[1:]
+
+    if not sys.stdin.isatty():
+        refuse(
+            "标准输入不是终端。\n"
+            "  本工具只允许在【终端】里运行（Terminal.app / iTerm）。\n"
+            "  在对话或 Agent 工具中运行会把口令写进会话记录。"
+        )
+
+    path = os.path.abspath(os.path.expanduser(path))
+    existing = []
+    if os.path.exists(path):
+        with open(path, encoding="utf-8") as fh:
+            existing = fh.read().splitlines()
+
+    index = parse(existing)
+
+    print(f"写入 {path}")
+    print("（输入时不显示，粘贴后直接回车）\n")
+
+    updates = {}
+    for key in keys:
+        try:
+            value = getpass.getpass(f"{key}: ")
+            again = getpass.getpass(f"{key} 再输一次: ")
+        except (EOFError, KeyboardInterrupt):
+            print("\n已取消，未写入任何内容。", file=sys.stderr)
+            return 1
+        if value != again:
+            print(f"两次输入不一致，已取消，未写入任何内容。", file=sys.stderr)
+            return 1
+        if not value:
+            print(f"{key} 为空，已取消。", file=sys.stderr)
+            return 1
+        updates[key] = value
+
+    for key, value in updates.items():
+        if key in index:
+            existing[index[key]] = f"{key}={value}"
+        else:
+            if existing and existing[-1].strip():
+                existing.append("")
+            existing.append(f"{key}={value}")
+
+    directory = os.path.dirname(path) or "."
+    os.makedirs(directory, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=directory, prefix=".set-env-")
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write("\n".join(existing) + "\n")
+        os.replace(tmp, path)
+        os.chmod(path, 0o600)
+    except BaseException:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+        raise
+
+    print(f"\n完成。已写入 {len(updates)} 项，权限 600。")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
