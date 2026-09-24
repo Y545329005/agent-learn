@@ -37,6 +37,17 @@ cd agent-learn
 
 安装后重启你的 Agent，`agent-learn` 会出现在 skill 列表中。
 
+### 更新到最新版（已安装过的机器）
+
+```bash
+cd agent-learn
+git pull
+./install.sh            # 用与首次安装相同的参数重跑
+```
+
+`install.sh` 每次都是「删旧目录 + 拷贝新版」，所以**重跑即升级，无需先卸载**。
+若首次装到了多个 Agent（如 `--all`），更新时带上相同参数即可。
+
 ### 2. 在日常对话里使用
 
 不用记命令，说人话即可：
